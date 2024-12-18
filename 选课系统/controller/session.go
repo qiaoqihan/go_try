@@ -8,7 +8,7 @@ import (
 )
 
 type UserSession struct {
-	ID       int
+	UserID   string
 	Username string
 	Level    int
 }

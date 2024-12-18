@@ -5,7 +5,6 @@ import (
 	"errors"
 	"finaltenzor/common"
 	"finaltenzor/model"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,13 +27,10 @@ func (u *User) Register(c *gin.Context) {
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
-	student := model.Student{
-		StudentID: form.StudentID,
-		User: model.User{
-			UserName: form.StudentName,
-			Password: form.Password,
-			Role:     "student",
-		},
+	student := model.User{
+		UserID:   form.StudentID,
+		UserName: form.StudentName,
+		Password: form.Password,
 	}
 	err := srv.RegisterStudent(&student)
 	if err != nil {
@@ -60,38 +56,32 @@ func (u *User) Login(c *gin.Context) {
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
-	UserName, role, err := srv.LoginStudent(form.StudentID, form.Password)
+	UserName, auth, err := srv.LoginStudent(form.StudentID, form.Password)
 	if err != nil {
 		logrus.Errorf("登录失败: %v", err)
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
-	UserID, err := strconv.Atoi(form.StudentID)
-	if err != nil {
-		logrus.Errorf("ID参数错误: %v", err)
-		c.Error(common.ErrNew(err, common.ParamErr))
-		return
-	}
-	isrightrole := false
-	if role == "student" {
+	isUser := false
+	if auth == 2 {
 		userSession := UserSession{
-			ID:       UserID,
-			Username: UserName,
-			Level:    1,
-		}
-		SessionSet(c, "user", userSession)
-		isrightrole = true
-	}
-	if role == "admin" {
-		userSession := UserSession{
-			ID:       UserID,
+			UserID:   form.StudentID,
 			Username: UserName,
 			Level:    2,
 		}
 		SessionSet(c, "user", userSession)
-		isrightrole = true
+		isUser = true
 	}
-	if !isrightrole {
+	if auth == 1 {
+		userSession := UserSession{
+			UserID:   form.StudentID,
+			Username: UserName,
+			Level:    1,
+		}
+		SessionSet(c, "user", userSession)
+		isUser = true
+	}
+	if !isUser {
 		c.Error(common.ErrNew(errors.New("您没有注册或登录权限"), common.AuthErr))
 		return
 	}
@@ -107,7 +97,7 @@ func (u *User) Logout(c *gin.Context) {
 // GetUserStatus - 获取当前用户状态
 func (u *User) GetUserStatus(c *gin.Context) {
 	userSession := SessionGet(c, "user")
-	studentID := userSession.(UserSession).ID
+	studentID := userSession.(UserSession).UserID
 	UserName, UserID, err := srv.GetCurrentUserStatus(studentID)
 	if err != nil {
 		logrus.Errorf("获取用户状态失败: %v", err)
@@ -170,7 +160,7 @@ func (u *User) GetCoursesList(c *gin.Context) {
 	}
 	courses, total, err := srv.GetCourses(page, limit, courseName, teachers, times, location)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	type responseformat struct {
@@ -192,7 +182,7 @@ func (u *User) GetCoursesList(c *gin.Context) {
 		}
 		TeacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 		if err != nil {
-			c.Error(common.ErrNew(err, common.SysErr))
+			c.Error(common.ErrNew(err, common.OpErr))
 			return
 		}
 		response = append(response, responseformat{
@@ -244,7 +234,7 @@ func (u *User) GetCourseDetail(c *gin.Context) {
 	}
 	TeacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	response = responseformat{
@@ -264,15 +254,15 @@ func (u *User) GrabCourse(c *gin.Context) {
 		CourseID int64 `form:"courseId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&form); err != nil {
-		fmt.Printf("controller %v\n", err)
+		logrus.Errorf("参数绑定错误: %v", err)
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
 	userSession := SessionGet(c, "user")
-	studentID := userSession.(UserSession).ID
+	studentID := userSession.(UserSession).UserID
 	err := srv.GrabCourse(studentID, form.CourseID)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, nil))
@@ -281,11 +271,10 @@ func (u *User) GrabCourse(c *gin.Context) {
 // ViewGrabbedCourses - 查看自己已经抢到的课
 func (u *User) ViewGrabbedCourses(c *gin.Context) {
 	userSession := SessionGet(c, "user")
-	studentID := userSession.(UserSession).ID
+	studentID := userSession.(UserSession).UserID
 	courses, total, err := srv.GetGrabbedCourses(studentID)
 	if err != nil {
-		fmt.Printf("controller %v\n", err)
-		c.Error(common.ErrNew(err, common.ParamErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	type TimeForm struct {
@@ -311,7 +300,7 @@ func (u *User) ViewGrabbedCourses(c *gin.Context) {
 		}
 		TeacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 		if err != nil {
-			c.Error(common.ErrNew(err, common.SysErr))
+			c.Error(common.ErrNew(err, common.OpErr))
 			return
 		}
 		response = append(response, responseformat{
@@ -329,7 +318,7 @@ func (u *User) ViewGrabbedCourses(c *gin.Context) {
 // GetSchedule - 获取用户当前已选课形成的课表
 func (u *User) GetSchedule(c *gin.Context) {
 	userSession := SessionGet(c, "user")
-	studentID := userSession.(UserSession).ID
+	studentID := userSession.(UserSession).UserID
 	schedule, err := srv.GetUserSchedule(studentID)
 	if err != nil {
 		logrus.Errorf("获取课表失败: %v", err)
@@ -348,10 +337,14 @@ func (u *User) GetSchedule(c *gin.Context) {
 		Location   *string    `json:"location,omitempty"`
 	}
 	coursesByDay := make(map[string][]CourseTime)
+	daysOfWeek := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	for _, day := range daysOfWeek {
+		coursesByDay[day] = []CourseTime{} // 初始化每一天为一个空的课程列表
+	}
 	for _, course := range schedule {
 		teacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 		if err != nil {
-			c.Error(common.ErrNew(err, common.SysErr))
+			c.Error(common.ErrNew(err, common.OpErr))
 			return
 		}
 		for _, timeItem := range course.CourseTimes {
@@ -377,12 +370,12 @@ func (u *User) GetSchedule(c *gin.Context) {
 // GiveUpCourse - 退课
 func (u *User) GiveUpCourse(c *gin.Context) {
 	userSession := SessionGet(c, "user")
-	studentID := userSession.(UserSession).ID
+	studentID := userSession.(UserSession).UserID
 	CourseID := c.Param("courseId")
 	err := srv.GiveUpCourse(studentID, CourseID)
 	if err != nil {
 		logrus.Errorf("退课失败: %v", err)
-		c.Error(common.ErrNew(err, common.ParamErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, nil))

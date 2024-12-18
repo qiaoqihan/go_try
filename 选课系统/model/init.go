@@ -63,7 +63,7 @@ func initModel() {
 
 	// example
 	// begin
-	DB.AutoMigrate(&Course{}, &CourseTime{}, &Teacher{}, &CourseTeacher{}, &Student{}, &CourseStudent{}, &User{}, &Admin{})
+	DB.AutoMigrate(&Course{}, &CourseTime{}, &Teacher{}, &CourseTeacher{}, &CourseStudent{}, &User{})
 	//end
 
 }

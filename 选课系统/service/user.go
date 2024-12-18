@@ -12,88 +12,68 @@ import (
 type User struct{}
 
 // RegisterStudent 注册新学生
-func (us *User) RegisterStudent(student *model.Student) error {
-	existingStudent := model.Student{}
-	if err := model.DB.Where("student_id = ?", student.StudentID).First(&existingStudent).Error; err == nil {
+func (us *User) RegisterStudent(student *model.User) error {
+	var existingStudent model.User
+	if err := model.DB.Where("user_id = ?", student.UserID).First(&existingStudent).Error; err == nil {
 		return errors.New("学生ID已存在")
 	}
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(student.User.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(student.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	student.User.Password = string(hashedPassword)
-	student.User.Role = "student"
-	tx := model.DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-	if err := tx.Create(&student.User).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	student.UserID = uint(student.User.ID)
-	if err := tx.Create(student).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit().Error; err != nil {
+	student.Password = string(hashedPassword)
+	student.Auth = 2
+	if err := model.DB.Create(student).Error; err != nil {
 		return err
 	}
 	return nil
 }
 
 // LoginStudent 用户登录
-func (us *User) LoginStudent(studentID, password string) (string, string, error) {
-	var admin model.Admin
-	if err := model.DB.Preload("User").Where("admin_id = ?", studentID).First(&admin).Error; err == nil && admin.User.UserName != "" {
-		if admin.User.Password != password {
-			return admin.User.UserName, "admin", errors.New("密码错误")
-		}
-		return admin.User.UserName, "admin", nil
+func (us *User) LoginStudent(studentID, password string) (string, int, error) {
+	var user model.User
+	if err := model.DB.Where("user_id = ?", studentID).First(&user).Error; err != nil {
+		return "", -1, errors.New("用户不存在")
 	}
-	var student model.Student
-	if err := model.DB.Preload("User").Where("student_id = ?", studentID).First(&student).Error; err == nil && student.User.UserName != "" {
-		if err := bcrypt.CompareHashAndPassword([]byte(student.User.Password), []byte(password)); err != nil {
-			return student.User.UserName, "student", errors.New("密码错误")
-		}
-		return student.User.UserName, "student", nil
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return "", -1, errors.New("密码错误")
 	}
-	return " ", "", errors.New("用户不存在")
+	return user.UserName, user.Auth, nil
 }
 
 // GetCurrentUserStatus 获取当前用户状态
-func (us *User) GetCurrentUserStatus(studentID int) (string, string, error) {
-	var admin model.Admin
-	if err := model.DB.Preload("User").Where("admin_id = ?", studentID).First(&admin).Error; err == nil && admin.User.UserName != "" {
-		return admin.User.UserName, admin.AdminID, nil
+func (us *User) GetCurrentUserStatus(studentID string) (string, string, error) {
+	var user model.User
+	if err := model.DB.Where("user_id = ?", studentID).First(&user).Error; err != nil {
+		return "", "", errors.New("用户不存在")
 	}
-	var student model.Student
-	if err := model.DB.Preload("User").Where("student_id = ?", studentID).First(&student).Error; err == nil && student.User.UserName != "" {
-		return student.User.UserName, student.StudentID, nil
-	}
-	return " ", "", errors.New("用户不存在")
+	return user.UserName, user.UserID, nil
 }
 
 // GrabCourse 抢课
-func (us *User) GrabCourse(studentID int, courseID int64) error {
+func (us *User) GrabCourse(studentID string, courseID int64) error {
+	tx := model.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 	var course model.Course
-	if err := model.DB.Where("course_id = ?", courseID).First(&course).Error; err != nil {
+	if err := tx.Where("course_id = ?", courseID).First(&course).Error; err != nil {
 		return errors.New("课程未找到")
 	}
-	var student model.Student
-	if err := model.DB.Where("student_id = ?", studentID).First(&student).Error; err != nil {
+	var student model.User
+	if err := tx.Where("user_id = ?", studentID).First(&student).Error; err != nil {
 		return errors.New("学生未找到")
 	}
 	var courseStudent model.CourseStudent
-	if err := model.DB.Where("student_id = ? AND course_id = ?", student.StudentID, courseID).First(&courseStudent).Error; err == nil {
+	if err := tx.Where("student_id = ? AND course_id = ?", student.UserID, courseID).First(&courseStudent).Error; err == nil {
 		return errors.New("学生已经抢过该课程")
 	}
 	var schedule []model.Course
-	err := model.DB.Preload("CourseTimes").
+	err := tx.Preload("CourseTimes").
 		Joins("JOIN course_student ON course_student.course_id = course.course_id").
-		Where("course_student.student_id = ?", studentID).
+		Where("course_student.student_id = ?", student.UserID).
 		Find(&schedule).Error
 	if err == nil {
 		for _, existingCourse := range schedule {
@@ -107,24 +87,29 @@ func (us *User) GrabCourse(studentID int, courseID int64) error {
 		}
 	}
 	var count int64
-	if err := model.DB.Model(&model.CourseStudent{}).Where("course_id = ?", courseID).Count(&count).Error; err != nil {
+	if err := tx.Model(&model.CourseStudent{}).Where("course_id = ?", courseID).Count(&count).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
 	if count >= int64(course.Capacity) {
 		return errors.New("课程容量已满，无法选择该课程")
 	}
 	courseStudent = model.CourseStudent{
-		StudentID: student.StudentID,
+		StudentID: student.UserID,
 		CourseID:  courseID,
 	}
-	if err := model.DB.Create(&courseStudent).Error; err != nil {
+	if err := tx.Create(&courseStudent).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 	return nil
 }
 
 // GetGrabbedCourses 获取抢到的课程列表
-func (us *User) GetGrabbedCourses(studentID int) ([]model.Course, int, error) {
+func (us *User) GetGrabbedCourses(studentID string) ([]model.Course, int, error) {
 	var courses []model.Course
 	err := model.DB.Preload("CourseTimes").
 		Joins("JOIN course_student ON course_student.course_id = course.course_id").
@@ -132,7 +117,7 @@ func (us *User) GetGrabbedCourses(studentID int) ([]model.Course, int, error) {
 		Find(&courses).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []model.Course{}, 0, nil
+			return nil, 0, errors.New("学生未选课")
 		}
 		return nil, 0, err
 	}
@@ -140,7 +125,7 @@ func (us *User) GetGrabbedCourses(studentID int) ([]model.Course, int, error) {
 }
 
 // GetUserSchedule 获取用户的课表
-func (us *User) GetUserSchedule(studentID int) ([]model.Course, error) {
+func (us *User) GetUserSchedule(studentID string) ([]model.Course, error) {
 	var courses []model.Course
 	err := model.DB.Preload("CourseTimes").
 		Joins("JOIN course_student ON course_student.course_id = course.course_id").
@@ -212,7 +197,7 @@ func (us *User) UserGetCourseDetail(courseID int64) (*model.Course, error) {
 }
 
 // GiveUpCourse 放弃课程
-func (us *User) GiveUpCourse(studentID int, courseID string) error {
+func (us *User) GiveUpCourse(studentID string, courseID string) error {
 	var courseStudent model.CourseStudent
 	if err := model.DB.Where("student_id = ? AND course_id = ?", studentID, courseID).First(&courseStudent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -21,7 +21,6 @@ func (a *Admin) AddCourse(c *gin.Context) {
 		EndTime   string `json:"endTime" binding:"required"`
 	}
 	var form struct {
-		CourseId       int64      `json:"courseId" binding:"required"`
 		CourseName     string     `json:"courseName" binding:"required"`
 		Capacity       int        `json:"capacity" binding:"required"`
 		CourseTeachers []string   `json:"teachers" binding:"required"`
@@ -48,14 +47,13 @@ func (a *Admin) AddCourse(c *gin.Context) {
 			return
 		}
 		srvtime = append(srvtime, model.CourseTime{
-			CourseID:  form.CourseId,
 			StartTime: startTime,
 			EndTime:   endTime,
 		})
 	}
-	courseID, err := srv.AddCourse(form.CourseId, form.CourseName, form.Capacity, form.CourseTeachers, srvtime, form.Location)
+	courseID, err := srv.AddCourse(form.CourseName, form.Capacity, form.CourseTeachers, srvtime, form.Location)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, gin.H{"id": courseID}))
@@ -72,7 +70,7 @@ func (a *Admin) DeleteCourse(c *gin.Context) {
 	}
 	err = srv.DeleteCourse(courseId)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, nil))
@@ -119,7 +117,7 @@ func (a *Admin) UpdateCourse(c *gin.Context) {
 	}
 	err := srv.UpdateCourse(form.CourseId, form.CourseName, form.Capacity, form.CourseTeachers, srvtime, form.Location)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, nil))
@@ -179,7 +177,7 @@ func (a *Admin) GetCourses(c *gin.Context) {
 	courses, total, err := srv.GetCourses(page, limit, courseName, teachers, times, location)
 	if err != nil {
 		logrus.Errorf("查询课程失败: %v", err)
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	type responseformat struct {
@@ -202,7 +200,7 @@ func (a *Admin) GetCourses(c *gin.Context) {
 		TeacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 		if err != nil {
 			logrus.Errorf("获取课程教师失败: %v", course.CourseID)
-			c.Error(common.ErrNew(err, common.SysErr))
+			c.Error(common.ErrNew(err, common.OpErr))
 			return
 		}
 		response = append(response, responseformat{
@@ -240,9 +238,9 @@ func (a *Admin) GetCourseDetail(c *gin.Context) {
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
-	course, err := srv.GetCourseDetail(page, limit, couresID)
+	course, err := srv.GetCourseDetail(couresID)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	type TimeForm struct {
@@ -270,21 +268,21 @@ func (a *Admin) GetCourseDetail(c *gin.Context) {
 			EndTime:   timeItem.EndTime.Format("2006-01-02 15:04:05"),
 		})
 	}
-	students, err := srv.GetStudentsByCourse(couresID)
+	students, err := srv.GetStudentsByCourse(page, limit, couresID)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	var studentForms []StudentForm
 	for _, student := range students {
 		studentForms = append(studentForms, StudentForm{
-			Name:      student.User.UserName,
-			StudentID: student.StudentID,
+			Name:      student.UserName,
+			StudentID: student.UserID,
 		})
 	}
 	TeacherNames, err := srv.GetTeacherNamesByCourses(course.CourseID)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	response := responseformat{
@@ -325,15 +323,15 @@ func (a *Admin) GetStudentsList(c *gin.Context) {
 	}
 	students, courseCounts, err := srv.GetStudentsList(page, limit, studentName, studentId)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	var studentForms []StudentFormat
 	for _, student := range students {
 		studentForms = append(studentForms, StudentFormat{
-			StudentName:  student.User.UserName,
-			StudentID:    student.StudentID,
-			TotalCourses: courseCounts[student.StudentID],
+			StudentName:  student.UserName,
+			StudentID:    student.UserID,
+			TotalCourses: courseCounts[student.UserID],
 		})
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, gin.H{"students": studentForms}))
@@ -344,7 +342,7 @@ func (a *Admin) GetStudentDetail(c *gin.Context) {
 	studentId := c.Param("studentId")
 	student, courses, err := srv.GetStudentDetail(studentId)
 	if err != nil {
-		c.Error(common.ErrNew(err, common.SysErr))
+		c.Error(common.ErrNew(err, common.OpErr))
 		return
 	}
 	type CourseTimeFormat struct {
@@ -362,11 +360,11 @@ func (a *Admin) GetStudentDetail(c *gin.Context) {
 		StudentName string         `json:"studentName"`
 		Courses     []CourseFormat `json:"courses"`
 	}
-	courseForms := make([]CourseFormat, len(*courses)) // 预分配切片
+	courseForms := make([]CourseFormat, len(*courses))
 	for i, course := range *courses {
 		Teacher, err := srv.GetTeacherNamesByCourses(course.CourseID)
 		if err != nil {
-			c.Error(common.ErrNew(err, common.SysErr))
+			c.Error(common.ErrNew(err, common.OpErr))
 			return
 		}
 		var timeForms []CourseTimeFormat
@@ -385,7 +383,7 @@ func (a *Admin) GetStudentDetail(c *gin.Context) {
 		}
 	}
 	response := ResponseFormat{
-		StudentName: student.User.UserName,
+		StudentName: student.UserName,
 		Courses:     courseForms,
 	}
 	c.JSON(http.StatusOK, ResponseNew(c, response))

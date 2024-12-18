@@ -4,7 +4,6 @@ import (
 	"errors"
 	"finaltenzor/model"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -12,7 +11,7 @@ import (
 type Admin struct{}
 
 // 添加课程
-func (a *Admin) AddCourse(CourseID int64, CourseName string, Capacity int, CourseTeachers []string, Time []model.CourseTime, Location string) (int64, error) {
+func (a *Admin) AddCourse(CourseName string, Capacity int, CourseTeachers []string, Time []model.CourseTime, Location string) (int64, error) {
 	TeacherService := TeacherService{}
 	var course model.Course
 	tx := model.DB.Begin()
@@ -21,7 +20,7 @@ func (a *Admin) AddCourse(CourseID int64, CourseName string, Capacity int, Cours
 			tx.Rollback()
 		}
 	}()
-	if err := tx.Where("course_id = ?", CourseID).First(&course).Error; err == nil {
+	if err := tx.Where("course_name = ?", CourseName).First(&course).Error; err == nil {
 		return 0, errors.New("该课程已存在且未被删除")
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		tx.Rollback()
@@ -30,8 +29,8 @@ func (a *Admin) AddCourse(CourseID int64, CourseName string, Capacity int, Cours
 	for _, newTime := range Time {
 		var count int64
 		if err := tx.Model(&model.Course{}).
-			Where("location = ? AND course_id != ? AND EXISTS (SELECT 1 FROM course_time WHERE course_time.course_id = course.course_id AND start_time < ? AND end_time > ?)",
-				Location, CourseID, newTime.EndTime, newTime.StartTime).
+			Where("location = ? AND course_name != ? AND EXISTS (SELECT 1 FROM course_time WHERE course_time.course_id = course.course_id AND start_time < ? AND end_time > ?)",
+				Location, CourseName, newTime.EndTime, newTime.StartTime).
 			Count(&count).Error; err != nil {
 			tx.Rollback()
 			return 0, err
@@ -63,32 +62,15 @@ func (a *Admin) AddCourse(CourseID int64, CourseName string, Capacity int, Cours
 			}
 		}
 	}
-	if errors.Is(tx.Unscoped().Where("course_id = ?", CourseID).First(&course).Error, gorm.ErrRecordNotFound) {
-		course = model.Course{
-			CourseID:    CourseID,
-			CourseName:  CourseName,
-			Capacity:    Capacity,
-			CourseTimes: Time,
-			Location:    Location,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-			DeletedAt:   gorm.DeletedAt{},
-		}
-		if err := tx.Create(&course).Error; err != nil {
-			tx.Rollback()
-			return 0, err
-		}
-	} else {
-		course.CourseName = CourseName
-		course.Capacity = Capacity
-		course.CourseTimes = Time
-		course.Location = Location
-		course.UpdatedAt = time.Now()
-		course.DeletedAt = gorm.DeletedAt{}
-		if err := tx.Save(&course).Error; err != nil {
-			tx.Rollback()
-			return 0, err
-		}
+	course = model.Course{
+		CourseName:  CourseName,
+		Capacity:    Capacity,
+		CourseTimes: Time,
+		Location:    Location,
+	}
+	if err := tx.Create(&course).Error; err != nil {
+		tx.Rollback()
+		return 0, err
 	}
 	var courseTeachers []model.CourseTeacher
 	for _, teacherName := range CourseTeachers {
@@ -98,7 +80,7 @@ func (a *Admin) AddCourse(CourseID int64, CourseName string, Capacity int, Cours
 			return 0, err
 		}
 		courseTeachers = append(courseTeachers, model.CourseTeacher{
-			CourseID:  CourseID,
+			CourseID:  course.CourseID,
 			TeacherID: teacherID,
 		})
 	}
@@ -123,7 +105,7 @@ func (a *Admin) DeleteCourse(courseID int64) error {
 		}
 	}()
 	var course model.Course
-	if err := model.DB.First(&course, courseID).Error; err != nil {
+	if err := tx.First(&course, courseID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			tx.Rollback()
 			return errors.New("课程不存在")
@@ -131,11 +113,19 @@ func (a *Admin) DeleteCourse(courseID int64) error {
 		tx.Rollback()
 		return err
 	}
-	if err := model.DB.Where("course_id = ?", courseID).Delete(&model.CourseTime{}).Error; err != nil {
+	if err := tx.Where("course_id = ?", courseID).Delete(&model.CourseTime{}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err := model.DB.Delete(&model.Course{}, courseID).Error; err != nil {
+	if err := tx.Where("course_id = ?", courseID).Delete(&model.CourseStudent{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Where("course_id = ?", courseID).Delete(&model.CourseTeacher{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+	if err := tx.Delete(&model.Course{}, courseID).Error; err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -167,10 +157,24 @@ func (a *Admin) UpdateCourse(courseID int64, CourseName string, Capacity int, Co
 	course.Capacity = Capacity
 	course.Location = Location
 	if len(Time) > 0 {
+		for _, timeItem := range Time {
+			var conflictingCourses []model.Course
+			if err := tx.Model(&model.Course{}).
+				Joins("JOIN course_time ON course_time.course_id = course.course_id").
+				Where("location = ? AND course.course_id != ? AND ((course_time.end_time > ?) AND (course_time.start_time < ?))",
+					Location, courseID, timeItem.StartTime, timeItem.EndTime).Find(&conflictingCourses).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+			if len(conflictingCourses) > 0 {
+				tx.Rollback()
+				return errors.New("教室冲突，请检查课程时间安排")
+			}
+		}
 		for i := range Time {
 			Time[i].CourseID = course.CourseID
 		}
-		if err := tx.Preload("CourseTimes").Where("course_id = ?", course.CourseID).Delete(&model.CourseTime{}).Error; err != nil {
+		if err := tx.Where("course_id = ?", course.CourseID).Delete(&model.CourseTime{}).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -180,16 +184,30 @@ func (a *Admin) UpdateCourse(courseID int64, CourseName string, Capacity int, Co
 		}
 	}
 	if len(CourseTeachers) > 0 {
-		if err := tx.Where("course_id = ?", courseID).Delete(&model.CourseTeacher{}).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
+		var teacherIDs []int64
 		for _, teacherName := range CourseTeachers {
 			teacherID, err := TeacherService.FindOrRegisterTeacher(teacherName)
 			if err != nil {
 				tx.Rollback()
 				return err
 			}
+			teacherIDs = append(teacherIDs, teacherID)
+		}
+		if len(teacherIDs) > 0 && len(Time) > 0 {
+			var conflicts []model.CourseTeacher
+			if err := tx.Model(&model.CourseTeacher{}).
+				Joins("JOIN course_time ON course_time.course_id = course_teacher.course_id").
+				Where("teacher_id IN (?) AND course_teacher.course_id != ? AND ((course_time.start_time < ? AND course_time.end_time > ?) OR (course_time.start_time < ? AND course_time.end_time > ?))",
+					teacherIDs, courseID, Time[0].EndTime, Time[0].StartTime, Time[0].StartTime, Time[0].EndTime).Find(&conflicts).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+			if len(conflicts) > 0 {
+				tx.Rollback()
+				return errors.New("教师冲突，请检查课程时间安排")
+			}
+		}
+		for _, teacherID := range teacherIDs {
 			courseTeacher := model.CourseTeacher{
 				CourseID:  course.CourseID,
 				TeacherID: teacherID,
@@ -258,9 +276,9 @@ func (a *Admin) GetCourses(page int, limit int, courseName string, teachers []st
 }
 
 // 获取课程详情
-func (a *Admin) GetCourseDetail(page int, limit int, courseID int64) (*model.Course, error) {
+func (a *Admin) GetCourseDetail(courseID int64) (*model.Course, error) {
 	var course model.Course
-	err := model.DB.Preload("CourseTimes").Where("course_id = ?", courseID).Limit(limit).Offset((page - 1) * limit).First(&course).Error
+	err := model.DB.Preload("CourseTimes").Where("course_id = ?", courseID).First(&course).Error
 	if err != nil {
 		return nil, err
 	}
@@ -268,37 +286,35 @@ func (a *Admin) GetCourseDetail(page int, limit int, courseID int64) (*model.Cou
 }
 
 // 获取学生列表
-func (a *Admin) GetStudentsList(page int, limit int, studentName string, studentID string) ([]model.Student, map[string]int, error) {
-	var students []model.Student
+func (a *Admin) GetStudentsList(page int, limit int, studentName string, studentID string) ([]model.User, map[string]int, error) {
+	var students []model.User
 	courseCounts := make(map[string]int)
-	query := model.DB.Preload("User").Model(&model.Student{})
+	query := model.DB.Model(&model.User{})
 	if studentName != "" {
-		query = query.Where("name LIKE ?", "%"+studentName+"%")
+		query = query.Where("user_name LIKE ?", "%"+studentName+"%")
 	}
 	if studentID != "" {
-		query = query.Where("student_id = ?", studentID)
+		query = query.Where("user_id = ?", studentID)
 	}
 	if err := query.Limit(limit).Offset((page - 1) * limit).Find(&students).Error; err != nil {
 		return nil, nil, err
 	}
 	for _, student := range students {
 		var count int64
-		err := model.DB.Table("course_student").Where("student_id = ?", student.StudentID).Count(&count).Error
+		err := model.DB.Table("course_student").Where("student_id = ?", student.UserID).Count(&count).Error
 		if err != nil {
 			return nil, nil, err
 		}
-		courseCounts[student.StudentID] = int(count)
+		courseCounts[student.UserID] = int(count)
 	}
 	return students, courseCounts, nil
 }
 
 // 获取学生详情
-func (a *Admin) GetStudentDetail(studentID string) (*model.Student, *[]model.Course, error) {
-	var student model.Student
+func (a *Admin) GetStudentDetail(studentID string) (*model.User, *[]model.Course, error) {
+	var student model.User
 	var courses []model.Course
-
-	// 检查学生是否存在
-	if err := model.DB.Preload("User").Where("student_id = ?", studentID).First(&student).Error; err != nil {
+	if err := model.DB.Where("user_id = ?", studentID).First(&student).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, errors.New("学生不存在")
 		}

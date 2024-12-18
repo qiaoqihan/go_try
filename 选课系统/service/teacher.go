@@ -2,7 +2,6 @@ package service
 
 import (
 	"finaltenzor/model"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -34,8 +33,6 @@ func (t *TeacherService) FindTeacherByID(id int64) (*model.Teacher, error) {
 
 func (t *TeacherService) RegisterTeacher(name string) (int64, error) {
 	newTeacher := model.Teacher{Name: name}
-	newTeacher.CreatedAt = time.Now()
-	newTeacher.UpdatedAt = time.Now()
 	if err := model.DB.Create(&newTeacher).Error; err != nil {
 		return 0, err
 	}
@@ -62,14 +59,13 @@ func (t *TeacherService) GetTeacherNamesByCourses(CourseID int64) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	if len(teacherIDs) == 0 {
-		return teacherNames, nil
-	}
-	err = model.DB.Table("teacher").
-		Where("id IN ?", teacherIDs).
-		Pluck("name", &teacherNames).Error
-	if err != nil {
-		return nil, err
+	if len(teacherIDs) > 0 {
+		err = model.DB.Table("teacher").
+			Where("id IN ?", teacherIDs).
+			Pluck("name", &teacherNames).Error
+		if err != nil {
+			return nil, err
+		}
 	}
 	return teacherNames, nil
 }

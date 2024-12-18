@@ -40,7 +40,23 @@ func Error(c *gin.Context) {
 
 func errorHandle(c *gin.Context, err any) {
 	errMsg := fmt.Sprintf("%v: %v\n", common.ErrorMapper[uint64(c.Errors.Last().Type)], err)
-	c.JSON(http.StatusOK, controller.Response{
+
+	var statusCode int
+	switch c.Errors.Last().Type {
+	case common.ParamErr:
+		statusCode = http.StatusBadRequest // 400
+	case common.SysErr:
+		statusCode = http.StatusInternalServerError // 500
+	case common.OpErr:
+		statusCode = http.StatusForbidden // 403
+	case common.AuthErr:
+		statusCode = http.StatusUnauthorized // 401
+	case common.LevelErr:
+		statusCode = http.StatusNotAcceptable // 406
+	default:
+		statusCode = http.StatusInternalServerError // 500
+	}
+	c.JSON(statusCode, controller.Response{
 		Success: false,
 		Message: errMsg,
 		Code:    uint64(c.Errors.Last().Type),

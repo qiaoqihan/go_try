@@ -13,7 +13,7 @@ func InitRouter(r *gin.Engine) {
 	{
 		adminRouter := apiRouter.Group("/admin")
 		{
-			adminRouter.Use(middleware.CheckRole(2))
+			adminRouter.Use(middleware.CheckRole(1))
 			{
 				adminRouter.POST("/courses", ctr.Admin.AddCourse)                   // 添加课程
 				adminRouter.DELETE("/courses/:courseId", ctr.Admin.DeleteCourse)    // 根据课程编号删除一门课程
@@ -33,7 +33,7 @@ func InitRouter(r *gin.Engine) {
 				userRouter.DELETE("", ctr.User.Logout)     // 退出登录
 				userRouter.GET("", ctr.User.GetUserStatus) // 获取当前用户状态
 			}
-			userRouter.Use(middleware.CheckRole(1))
+			userRouter.Use(middleware.CheckRole(2))
 			{
 				userRouter.POST("/courses", ctr.User.GrabCourse)                 // 抢课
 				userRouter.DELETE("/courses/:courseId", ctr.User.GiveUpCourse)   // 放弃选择这门课
