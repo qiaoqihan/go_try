@@ -109,21 +109,17 @@ func (u *User) GetUserStatus(c *gin.Context) {
 
 // GetCoursesList - 获取课程列表
 func (u *User) GetCoursesList(c *gin.Context) {
-	pageStr := c.DefaultQuery("page", "1")
-	limitStr := c.DefaultQuery("limit", "10")
-	courseName := c.Query("courseName")
-	teachers := c.QueryArray("teachers")
-	location := c.Query("location")
-	timeStrings := c.Query("time")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil {
-		logrus.Errorf("无效的页面参数: %v", pageStr)
-		c.Error(common.ErrNew(err, common.ParamErr))
-		return
+	type QueryParams struct {
+		Page       int      `form:"page" binding:"required,gt=0"`
+		Limit      int      `form:"limit" binding:"required,gt=0"`
+		CourseName string   `form:"courseName"`
+		Teachers   []string `form:"teachers"`
+		Location   string   `form:"location"`
+		Time       string   `form:"time"`
 	}
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		logrus.Errorf("无效的限制参数: %v", limitStr)
+	var params QueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		logrus.Errorf("参数错误: %v", err)
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
@@ -132,10 +128,10 @@ func (u *User) GetCoursesList(c *gin.Context) {
 		StartTime string `json:"startTime"`
 		EndTime   string `json:"endTime"`
 	}
-	if timeStrings != "" {
+	if params.Time != "" {
 		var timeForms []TimeForm
-		if err := json.Unmarshal([]byte(timeStrings), &timeForms); err != nil {
-			logrus.Errorf("时间参数格式错误: %v", timeStrings)
+		if err := json.Unmarshal([]byte(params.Time), &timeForms); err != nil {
+			logrus.Errorf("时间参数格式错误: %v", params.Time)
 			c.Error(common.ErrNew(err, common.ParamErr))
 			return
 		}
@@ -158,7 +154,7 @@ func (u *User) GetCoursesList(c *gin.Context) {
 			})
 		}
 	}
-	courses, total, err := srv.GetCourses(page, limit, courseName, teachers, times, location)
+	courses, total, err := srv.GetCourses(params.Page, params.Limit, params.CourseName, params.Teachers, times, params.Location)
 	if err != nil {
 		c.Error(common.ErrNew(err, common.OpErr))
 		return

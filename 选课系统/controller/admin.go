@@ -125,21 +125,17 @@ func (a *Admin) UpdateCourse(c *gin.Context) {
 
 // GetCourses 查询课程
 func (a *Admin) GetCourses(c *gin.Context) {
-	pageStr := c.DefaultQuery("page", "1")
-	limitStr := c.DefaultQuery("limit", "10")
-	courseName := c.Query("courseName")
-	teachers := c.QueryArray("teachers")
-	location := c.Query("location")
-	timeStrings := c.Query("time")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil {
-		logrus.Errorf("无效的页面参数: %v", pageStr)
-		c.Error(common.ErrNew(err, common.ParamErr))
-		return
+	type QueryParams struct {
+		Page       int      `form:"page" binding:"required,gt=0"`
+		Limit      int      `form:"limit" binding:"required,gt=0"`
+		CourseName string   `form:"courseName"`
+		Teachers   []string `form:"teachers"`
+		Location   string   `form:"location"`
+		Time       string   `form:"time"`
 	}
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		logrus.Errorf("无效的限制参数: %v", limitStr)
+	var params QueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		logrus.Errorf("参数错误: %v", err)
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
@@ -148,10 +144,10 @@ func (a *Admin) GetCourses(c *gin.Context) {
 		StartTime string `json:"startTime"`
 		EndTime   string `json:"endTime"`
 	}
-	if timeStrings != "" {
+	if params.Time != "" {
 		var timeForms []TimeForm
-		if err := json.Unmarshal([]byte(timeStrings), &timeForms); err != nil {
-			logrus.Errorf("时间参数格式错误: %v", timeStrings)
+		if err := json.Unmarshal([]byte(params.Time), &timeForms); err != nil {
+			logrus.Errorf("时间参数格式错误: %v", params.Time)
 			c.Error(common.ErrNew(err, common.ParamErr))
 			return
 		}
@@ -174,7 +170,7 @@ func (a *Admin) GetCourses(c *gin.Context) {
 			})
 		}
 	}
-	courses, total, err := srv.GetCourses(page, limit, courseName, teachers, times, location)
+	courses, total, err := srv.GetCourses(params.Page, params.Limit, params.CourseName, params.Teachers, times, params.Location)
 	if err != nil {
 		logrus.Errorf("查询课程失败: %v", err)
 		c.Error(common.ErrNew(err, common.OpErr))
@@ -300,19 +296,15 @@ func (a *Admin) GetCourseDetail(c *gin.Context) {
 
 // GetStudentsList 获取学生列表处理函数
 func (a *Admin) GetStudentsList(c *gin.Context) {
-	pageStr := c.DefaultQuery("page", "1")
-	limitStr := c.DefaultQuery("limit", "10")
-	studentName := c.Query("studentName")
-	studentId := c.Query("studentId")
-	page, err := strconv.Atoi(pageStr)
-	if err != nil {
-		logrus.Errorf("无效的页面参数: %v", pageStr)
-		c.Error(common.ErrNew(err, common.ParamErr))
-		return
+	type QueryParams struct {
+		Page        int    `form:"page" binding:"required,gt=0"`
+		Limit       int    `form:"limit" binding:"required,gt=0"`
+		StudentName string `form:"studentName"`
+		StudentID   string `form:"studentId"`
 	}
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		logrus.Errorf("无效的限制参数: %v", limitStr)
+	var params QueryParams
+	if err := c.ShouldBindQuery(&params); err != nil {
+		logrus.Errorf("参数错误: %v", err)
 		c.Error(common.ErrNew(err, common.ParamErr))
 		return
 	}
@@ -321,7 +313,7 @@ func (a *Admin) GetStudentsList(c *gin.Context) {
 		StudentID    string `json:"studentId"`
 		TotalCourses int    `json:"totalCourses"`
 	}
-	students, courseCounts, err := srv.GetStudentsList(page, limit, studentName, studentId)
+	students, courseCounts, err := srv.GetStudentsList(params.Page, params.Limit, params.StudentName, params.StudentID)
 	if err != nil {
 		c.Error(common.ErrNew(err, common.OpErr))
 		return
